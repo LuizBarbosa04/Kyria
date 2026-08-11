@@ -1,0 +1,1 @@
+print("Kyria iniciado.")
