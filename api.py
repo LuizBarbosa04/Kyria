@@ -1,0 +1,147 @@
+import subprocess
+import tempfile
+from pathlib import Path
+
+from fastapi import FastAPI
+from fastapi.responses import HTMLResponse, FileResponse
+
+from llm import perguntar_llm
+
+app = FastAPI()
+
+BASE_DIR = Path(__file__).resolve().parent
+MODELO_VOZ = BASE_DIR / "voices" / "pt_BR-cadu-medium.onnx"
+
+
+@app.get("/", response_class=HTMLResponse)
+def inicio():
+    return """
+    <!DOCTYPE html>
+    <html lang="pt-BR">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Kyria</title>
+    </head>
+    <body>
+        <h1>Kyria</h1>
+
+        <div id="chat"></div>
+
+        <input id="pergunta" type="text" placeholder="Digite sua pergunta">
+        <button onclick="enviar()">Enviar</button>
+        <button onclick="ouvir()">🎤</button>
+
+        <script>
+            const campo = document.getElementById("pergunta")
+
+            campo.addEventListener("keydown", function(evento) {
+                if (evento.key === "Enter") {
+                    enviar()
+                }
+            })
+
+            async function enviar() {
+                const pergunta = campo.value.trim()
+
+                if (!pergunta) {
+                    return
+                }
+
+                adicionarMensagem("Você", pergunta)
+                campo.value = ""
+
+                const resposta = await fetch(
+                    `/perguntar?texto=${encodeURIComponent(pergunta)}`
+                )
+
+                const dados = await resposta.json()
+
+                adicionarMensagem("Kyria", dados.resposta)
+                falar(dados.resposta)
+            }
+
+            function adicionarMensagem(nome, texto) {
+                const chat = document.getElementById("chat")
+                const mensagem = document.createElement("p")
+
+                mensagem.textContent = `${nome}: ${texto}`
+
+                chat.appendChild(mensagem)
+            }
+
+            function falar(texto) {
+                const audio = new Audio(
+                    `/falar?texto=${encodeURIComponent(texto)}`
+                )
+
+                audio.play()
+            }
+
+            function ouvir() {
+                const SpeechRecognition =
+                    window.SpeechRecognition ||
+                    window.webkitSpeechRecognition
+
+                if (!SpeechRecognition) {
+                    alert("Reconhecimento de voz não disponível neste navegador.")
+                    return
+                }
+
+                const reconhecimento = new SpeechRecognition()
+
+                reconhecimento.lang = "pt-BR"
+                reconhecimento.interimResults = false
+
+                reconhecimento.onresult = function(evento) {
+                    const texto = evento.results[0][0].transcript
+
+                    campo.value = texto
+                    enviar()
+                }
+
+                reconhecimento.start()
+            }
+        </script>
+    </body>
+    </html>
+    """
+
+
+@app.get("/perguntar")
+def perguntar(texto: str):
+    resposta = perguntar_llm(texto)
+
+    return {
+        "pergunta": texto,
+        "resposta": resposta
+    }
+
+
+@app.get("/falar")
+def falar(texto: str):
+    arquivo = tempfile.NamedTemporaryFile(
+        suffix=".wav",
+        delete=False
+    )
+
+    caminho_audio = Path(arquivo.name)
+    arquivo.close()
+
+    subprocess.run(
+        [
+            "piper",
+            "--model",
+            str(MODELO_VOZ),
+            "--output_file",
+            str(caminho_audio)
+        ],
+        input=texto,
+        text=True,
+        check=True
+    )
+
+    return FileResponse(
+        caminho_audio,
+        media_type="audio/wav"
+    )

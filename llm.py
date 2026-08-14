@@ -5,10 +5,11 @@ def perguntar_llm(pergunta):
         resposta = requests.post(
             "http://localhost:11434/api/generate",
             json={
-                "model": "llama3.2:3b",
+                "model": "qwen3:8b",
                 "prompt": pergunta,
                 "system": "Você é Kyria, uma assistente virtual. Responda sempre em português brasileiro, de forma direta e curta, usando no máximo duas frases.",
                 "stream": False,
+                "think": False,
                 "options": {
                     "num_predict": 80
                 }
