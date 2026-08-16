@@ -29,36 +29,67 @@ def inicio():
         <div id="chat"></div>
 
         <input id="pergunta" type="text" placeholder="Digite sua pergunta">
-        <button onclick="enviar()">Enviar</button>
-        <button onclick="ouvir()">🎤</button>
+        <button id="botaoEnviar" onclick="enviar()">Enviar</button>
+        <button id="botaoMicrofone" onclick="ouvir()">🎤</button>
 
         <script>
             const campo = document.getElementById("pergunta")
+            const botaoEnviar = document.getElementById("botaoEnviar")
+            const botaoMicrofone = document.getElementById("botaoMicrofone")
+
+            let ocupado = false
 
             campo.addEventListener("keydown", function(evento) {
-                if (evento.key === "Enter") {
+                if (evento.key === "Enter" && !ocupado) {
                     enviar()
                 }
             })
 
+            function bloquear() {
+                ocupado = true
+                campo.disabled = true
+                botaoEnviar.disabled = true
+                botaoMicrofone.disabled = true
+            }
+
+            function desbloquear() {
+                ocupado = false
+                campo.disabled = false
+                botaoEnviar.disabled = false
+                botaoMicrofone.disabled = false
+                campo.focus()
+            }
+
             async function enviar() {
+                if (ocupado) {
+                    return
+                }
+
                 const pergunta = campo.value.trim()
 
                 if (!pergunta) {
                     return
                 }
 
+                bloquear()
+
                 adicionarMensagem("Você", pergunta)
                 campo.value = ""
 
-                const resposta = await fetch(
-                    `/perguntar?texto=${encodeURIComponent(pergunta)}`
-                )
+                try {
+                    const resposta = await fetch(
+                        `/perguntar?texto=${encodeURIComponent(pergunta)}`
+                    )
 
-                const dados = await resposta.json()
+                    const dados = await resposta.json()
 
-                adicionarMensagem("Kyria", dados.resposta)
-                falar(dados.resposta)
+                    adicionarMensagem("Kyria", dados.resposta)
+                    falar(dados.resposta)
+
+                } catch {
+                    adicionarMensagem("Kyria", "Ocorreu um erro ao processar sua mensagem.")
+                    desbloquear()
+                }
             }
 
             function adicionarMensagem(nome, texto) {
@@ -75,10 +106,24 @@ def inicio():
                     `/falar?texto=${encodeURIComponent(texto)}`
                 )
 
-                audio.play()
+                audio.onended = function() {
+                    desbloquear()
+                }
+
+                audio.onerror = function() {
+                    desbloquear()
+                }
+
+                audio.play().catch(function() {
+                    desbloquear()
+                })
             }
 
             function ouvir() {
+                if (ocupado) {
+                    return
+                }
+
                 const SpeechRecognition =
                     window.SpeechRecognition ||
                     window.webkitSpeechRecognition
