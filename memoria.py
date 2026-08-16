@@ -43,7 +43,7 @@ def salvar_mensagem(role, content):
     conexao.close()
 
 
-def carregar_historico():
+def carregar_historico(limite=10):
     conexao = conectar()
     cursor = conexao.cursor()
 
@@ -51,12 +51,16 @@ def carregar_historico():
         """
         SELECT role, content
         FROM conversas
-        ORDER BY id
-        """
+        ORDER BY id DESC
+        LIMIT ?
+        """,
+        (limite,)
     )
 
     resultados = cursor.fetchall()
     conexao.close()
+
+    resultados.reverse()
 
     return [
         {

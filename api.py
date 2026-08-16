@@ -1,3 +1,4 @@
+import re
 import subprocess
 import tempfile
 from pathlib import Path
@@ -11,6 +12,15 @@ app = FastAPI()
 
 BASE_DIR = Path(__file__).resolve().parent
 MODELO_VOZ = BASE_DIR / "voices" / "pt_BR-cadu-medium.onnx"
+
+
+def limpar_texto(texto):
+    texto = re.sub(r"\*\*(.*?)\*\*", r"\1", texto)
+    texto = re.sub(r"\*(.*?)\*", r"\1", texto)
+    texto = re.sub(r"`(.*?)`", r"\1", texto)
+    texto = re.sub(r"#{1,6}\s*", "", texto)
+
+    return texto.strip()
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -156,6 +166,7 @@ def inicio():
 @app.get("/perguntar")
 def perguntar(texto: str):
     resposta = perguntar_llm(texto)
+    resposta = limpar_texto(resposta)
 
     return {
         "pergunta": texto,
@@ -165,6 +176,8 @@ def perguntar(texto: str):
 
 @app.get("/falar")
 def falar(texto: str):
+    texto = limpar_texto(texto)
+
     arquivo = tempfile.NamedTemporaryFile(
         suffix=".wav",
         delete=False
@@ -179,7 +192,13 @@ def falar(texto: str):
             "--model",
             str(MODELO_VOZ),
             "--output_file",
-            str(caminho_audio)
+            str(caminho_audio),
+            "--length-scale",
+            "0.92",
+            "--noise-scale",
+            "0.6",
+            "--noise-w-scale",
+            "0.8"
         ],
         input=texto,
         text=True,
