@@ -1,4 +1,6 @@
 import re
+from time import perf_counter
+
 import requests
 
 from memoria import criar_banco, carregar_historico, salvar_mensagem
@@ -38,6 +40,15 @@ def remover_status_verificacao(texto):
     return texto.strip()
 
 
+def formatar_metrica_ollama(tokens, duracao):
+    if not isinstance(tokens, int) or not isinstance(duracao, int):
+        return "indisponível"
+
+    segundos = duracao / 1_000_000_000
+
+    return f"{tokens} tokens em {segundos:.3f} s"
+
+
 def perguntar_llm(pergunta):
     permitido, motivo = validar_entrada(pergunta)
 
@@ -52,6 +63,8 @@ def perguntar_llm(pergunta):
 
         if verificar:
             fontes = pesquisar_fontes(pergunta)
+        else:
+            print("[TEMPO] Tavily: não consultada nesta pergunta")
 
         system_prompt = (
             "Você é Kyria, uma assistente virtual. "
@@ -90,24 +103,48 @@ def perguntar_llm(pergunta):
             "content": conteudo_pergunta
         })
 
-        resposta = requests.post(
-            "http://localhost:11434/api/chat",
-            json={
-                "model": "qwen3:8b",
-                "messages": mensagens,
-                "stream": False,
-                "think": False,
-                "keep_alive": "30m",
-                "options": {
-                    "num_predict": 200
-                }
-            },
-            timeout=30
-        )
+        inicio_ollama = perf_counter()
+        estado_ollama = "erro"
 
-        resposta.raise_for_status()
+        try:
+            resposta = requests.post(
+                "http://localhost:11434/api/chat",
+                json={
+                    "model": "qwen3:8b",
+                    "messages": mensagens,
+                    "stream": False,
+                    "think": False,
+                    "keep_alive": "30m",
+                    "options": {
+                        "num_predict": 150
+                    }
+                },
+                timeout=30
+            )
 
-        dados = resposta.json()
+            resposta.raise_for_status()
+
+            dados = resposta.json()
+            metrica_prompt = formatar_metrica_ollama(
+                dados.get("prompt_eval_count"),
+                dados.get("prompt_eval_duration")
+            )
+            metrica_resposta = formatar_metrica_ollama(
+                dados.get("eval_count"),
+                dados.get("eval_duration")
+            )
+            tamanho_texto = len(dados.get("message", {}).get("content", ""))
+            print(
+                "[MÉTRICAS] Ollama | "
+                f"prompt: {metrica_prompt} | "
+                f"resposta: {metrica_resposta} | "
+                f"texto: {tamanho_texto} caracteres"
+            )
+            estado_ollama = "sucesso"
+
+        finally:
+            duracao_ollama = perf_counter() - inicio_ollama
+            print(f"[TEMPO] Ollama: {duracao_ollama:.3f} s | {estado_ollama}")
 
         texto = dados["message"]["content"].strip()
         texto = validar_saida(texto)

@@ -2,6 +2,7 @@ import re
 import subprocess
 import tempfile
 from pathlib import Path
+from time import perf_counter
 
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, FileResponse
@@ -165,17 +166,25 @@ def inicio():
 
 @app.get("/perguntar")
 def perguntar(texto: str):
-    resposta = perguntar_llm(texto)
-    resposta = limpar_texto(resposta)
+    inicio = perf_counter()
 
-    return {
-        "pergunta": texto,
-        "resposta": resposta
-    }
+    try:
+        resposta = perguntar_llm(texto)
+        resposta = limpar_texto(resposta)
+
+        return {
+            "pergunta": texto,
+            "resposta": resposta
+        }
+
+    finally:
+        duracao = perf_counter() - inicio
+        print(f"[TEMPO] /perguntar total: {duracao:.3f} s")
 
 
 @app.get("/falar")
 def falar(texto: str):
+    inicio_total = perf_counter()
     texto = limpar_texto(texto)
 
     arquivo = tempfile.NamedTemporaryFile(
@@ -186,24 +195,33 @@ def falar(texto: str):
     caminho_audio = Path(arquivo.name)
     arquivo.close()
 
-    subprocess.run(
-        [
-            "piper",
-            "--model",
-            str(MODELO_VOZ),
-            "--output_file",
-            str(caminho_audio),
-            "--length-scale",
-            "0.92",
-            "--noise-scale",
-            "0.6",
-            "--noise-w-scale",
-            "0.8"
-        ],
-        input=texto,
-        text=True,
-        check=True
-    )
+    inicio_piper = perf_counter()
+
+    try:
+        subprocess.run(
+            [
+                "piper",
+                "--model",
+                str(MODELO_VOZ),
+                "--output_file",
+                str(caminho_audio),
+                "--length-scale",
+                "0.92",
+                "--noise-scale",
+                "0.6",
+                "--noise-w-scale",
+                "0.8"
+            ],
+            input=texto,
+            text=True,
+            check=True
+        )
+
+    finally:
+        duracao_piper = perf_counter() - inicio_piper
+        duracao_total = perf_counter() - inicio_total
+        print(f"[TEMPO] Piper: {duracao_piper:.3f} s")
+        print(f"[TEMPO] /falar total: {duracao_total:.3f} s")
 
     return FileResponse(
         caminho_audio,

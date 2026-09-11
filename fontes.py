@@ -1,4 +1,5 @@
 import os
+from time import perf_counter
 
 import requests
 from dotenv import load_dotenv
@@ -9,8 +10,13 @@ TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
 
 
 def pesquisar_fontes(pergunta):
+    inicio = perf_counter()
+
     if not TAVILY_API_KEY:
+        print("[TEMPO] Tavily: não consultada | chave não configurada")
         return []
+
+    estado = "erro"
 
     try:
         resposta = requests.post(
@@ -32,8 +38,14 @@ def pesquisar_fontes(pergunta):
         resposta.raise_for_status()
 
         dados = resposta.json()
+        resultados = dados.get("results", [])
+        estado = f"sucesso | resultados={len(resultados)}"
 
-        return dados.get("results", [])
+        return resultados
 
     except requests.RequestException:
         return []
+
+    finally:
+        duracao = perf_counter() - inicio
+        print(f"[TEMPO] Tavily: {duracao:.3f} s | {estado}")
