@@ -42,13 +42,18 @@ def inicio():
         <input id="pergunta" type="text" placeholder="Digite sua pergunta">
         <button id="botaoEnviar" onclick="enviar()">Enviar</button>
         <button id="botaoMicrofone" onclick="ouvir()">🎤</button>
+        <button id="botaoParar" onclick="parar()" disabled>Parar</button>
 
         <script>
             const campo = document.getElementById("pergunta")
             const botaoEnviar = document.getElementById("botaoEnviar")
             const botaoMicrofone = document.getElementById("botaoMicrofone")
+            const botaoParar = document.getElementById("botaoParar")
 
             let ocupado = false
+            let controladorAtual = null
+            let audioAtual = null
+            let identificadorRequisicao = 0
 
             campo.addEventListener("keydown", function(evento) {
                 if (evento.key === "Enter" && !ocupado) {
@@ -61,6 +66,7 @@ def inicio():
                 campo.disabled = true
                 botaoEnviar.disabled = true
                 botaoMicrofone.disabled = true
+                botaoParar.disabled = false
             }
 
             function desbloquear() {
@@ -68,6 +74,7 @@ def inicio():
                 campo.disabled = false
                 botaoEnviar.disabled = false
                 botaoMicrofone.disabled = false
+                botaoParar.disabled = true
                 campo.focus()
             }
 
@@ -82,6 +89,8 @@ def inicio():
                     return
                 }
 
+                const identificador = ++identificadorRequisicao
+                controladorAtual = new AbortController()
                 bloquear()
 
                 adicionarMensagem("Você", pergunta)
@@ -89,17 +98,25 @@ def inicio():
 
                 try {
                     const resposta = await fetch(
-                        `/perguntar?texto=${encodeURIComponent(pergunta)}`
+                        `/perguntar?texto=${encodeURIComponent(pergunta)}`,
+                        { signal: controladorAtual.signal }
                     )
 
                     const dados = await resposta.json()
 
-                    adicionarMensagem("Kyria", dados.resposta)
-                    falar(dados.resposta)
+                    if (identificador !== identificadorRequisicao) {
+                        return
+                    }
 
-                } catch {
-                    adicionarMensagem("Kyria", "Ocorreu um erro ao processar sua mensagem.")
-                    desbloquear()
+                    controladorAtual = null
+                    adicionarMensagem("Kyria", dados.resposta)
+                    falar(dados.resposta, identificador)
+
+                } catch (erro) {
+                    if (erro.name !== "AbortError" && identificador === identificadorRequisicao) {
+                        adicionarMensagem("Kyria", "Ocorreu um erro ao processar sua mensagem.")
+                        desbloquear()
+                    }
                 }
             }
 
@@ -112,22 +129,50 @@ def inicio():
                 chat.appendChild(mensagem)
             }
 
-            function falar(texto) {
+            function falar(texto, identificador) {
                 const audio = new Audio(
                     `/falar?texto=${encodeURIComponent(texto)}`
                 )
 
+                audioAtual = audio
+
                 audio.onended = function() {
-                    desbloquear()
+                    if (identificador === identificadorRequisicao) {
+                        audioAtual = null
+                        desbloquear()
+                    }
                 }
 
                 audio.onerror = function() {
-                    desbloquear()
+                    if (identificador === identificadorRequisicao) {
+                        audioAtual = null
+                        desbloquear()
+                    }
                 }
 
                 audio.play().catch(function() {
-                    desbloquear()
+                    if (identificador === identificadorRequisicao) {
+                        audioAtual = null
+                        desbloquear()
+                    }
                 })
+            }
+
+            function parar() {
+                identificadorRequisicao += 1
+
+                if (controladorAtual) {
+                    controladorAtual.abort()
+                    controladorAtual = null
+                }
+
+                if (audioAtual) {
+                    audioAtual.pause()
+                    audioAtual.currentTime = 0
+                    audioAtual = null
+                }
+
+                desbloquear()
             }
 
             function ouvir() {
