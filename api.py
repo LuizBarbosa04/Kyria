@@ -6,6 +6,7 @@ from time import perf_counter
 
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, FileResponse
+from starlette.background import BackgroundTask
 
 from llm import perguntar_llm
 
@@ -15,11 +16,19 @@ BASE_DIR = Path(__file__).resolve().parent
 MODELO_VOZ = BASE_DIR / "voices" / "pt_BR-cadu-medium.onnx"
 
 
-def limpar_texto(texto):
+def limpar_texto(texto, remover_marcadores=False):
     texto = re.sub(r"\*\*(.*?)\*\*", r"\1", texto)
     texto = re.sub(r"\*(.*?)\*", r"\1", texto)
     texto = re.sub(r"`(.*?)`", r"\1", texto)
     texto = re.sub(r"#{1,6}\s*", "", texto)
+
+    if remover_marcadores:
+        texto = re.sub(
+            r"\s*\[(Verificado com fontes externas|Não foi possível verificar|Não verificado)\]\s*",
+            "",
+            texto,
+            flags=re.IGNORECASE
+        )
 
     return texto.strip()
 
@@ -33,27 +42,352 @@ def inicio():
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>Kyria</title>
+        <style>
+            :root {
+                --fundo: #f3f0e9;
+                --superficie: #fffdf8;
+                --texto: #17232b;
+                --texto-secundario: #5c6769;
+                --borda: #cbd2cd;
+                --destaque: #176b65;
+                --destaque-escuro: #0f514d;
+                --mensagem-kyria: #e3ebe8;
+                --perigo: #a93f3f;
+                --perigo-escuro: #812f2f;
+                --estado-inativo: #8a9492;
+                --espaco: clamp(1.25rem, 3vw, 2.5rem);
+            }
+
+            * {
+                box-sizing: border-box;
+            }
+
+            body {
+                min-height: 100vh;
+                margin: 0;
+                background: var(--fundo);
+                color: var(--texto);
+                font-family: "Segoe UI", sans-serif;
+            }
+
+            button,
+            input {
+                font: inherit;
+            }
+
+            .aplicacao {
+                width: min(100%, 900px);
+                min-height: 100vh;
+                margin: 0 auto;
+                padding: var(--espaco);
+                display: grid;
+                grid-template-rows: auto minmax(360px, 1fr) auto;
+                gap: clamp(1rem, 2vw, 1.75rem);
+            }
+
+            .cabecalho {
+                display: flex;
+                justify-content: space-between;
+                align-items: end;
+                gap: 1rem;
+                padding-bottom: 1rem;
+                border-bottom: 1px solid var(--borda);
+            }
+
+            .marca {
+                margin: 0;
+                font-family: Georgia, serif;
+                font-size: clamp(2rem, 5vw, 3.25rem);
+                font-weight: 700;
+                line-height: 0.9;
+                letter-spacing: -0.05em;
+            }
+
+            .descricao {
+                margin: 0.6rem 0 0;
+                color: var(--texto-secundario);
+                font-size: 0.95rem;
+            }
+
+            .estado {
+                margin: 0;
+                display: flex;
+                align-items: center;
+                gap: 0.5rem;
+                color: var(--texto-secundario);
+                font-size: 0.85rem;
+                white-space: nowrap;
+            }
+
+            .estado::before {
+                width: 0.55rem;
+                height: 0.55rem;
+                border-radius: 50%;
+                background: var(--estado-inativo);
+                content: "";
+            }
+
+            .estado[data-ativo="true"]::before {
+                background: var(--destaque);
+            }
+
+            .conversa {
+                min-height: 0;
+                overflow-y: auto;
+                padding: clamp(1rem, 3vw, 2rem);
+                background: var(--superficie);
+                border: 1px solid var(--borda);
+            }
+
+            .mensagens {
+                min-height: 100%;
+                display: flex;
+                flex-direction: column;
+                justify-content: end;
+                gap: 1rem;
+            }
+
+            .orientacao {
+                align-self: center;
+                margin: auto 0;
+                color: var(--texto-secundario);
+                font-size: 0.95rem;
+                text-align: center;
+            }
+
+            .mensagem {
+                width: fit-content;
+                max-width: min(78%, 620px);
+                padding: 0.8rem 1rem;
+                border-radius: 0.75rem;
+                line-height: 1.5;
+            }
+
+            .mensagem-remetente {
+                display: block;
+                margin-bottom: 0.25rem;
+                font-size: 0.75rem;
+                font-weight: 700;
+                letter-spacing: 0.04em;
+                text-transform: uppercase;
+            }
+
+            .mensagem-conteudo {
+                white-space: pre-wrap;
+            }
+
+            .mensagem.usuario {
+                align-self: end;
+                background: var(--destaque);
+                color: #ffffff;
+                border-bottom-right-radius: 0.15rem;
+            }
+
+            .mensagem.kyria {
+                align-self: start;
+                background: var(--mensagem-kyria);
+                border-bottom-left-radius: 0.15rem;
+            }
+
+            .entrada {
+                display: grid;
+                gap: 0.75rem;
+            }
+
+            .rotulo {
+                color: var(--texto-secundario);
+                font-size: 0.85rem;
+                font-weight: 700;
+            }
+
+            .linha-entrada {
+                display: flex;
+                gap: 0.65rem;
+            }
+
+            #pergunta {
+                min-width: 0;
+                flex: 1;
+                min-height: 3rem;
+                padding: 0.7rem 0.85rem;
+                border: 1px solid var(--borda);
+                border-radius: 0.4rem;
+                background: var(--superficie);
+                color: var(--texto);
+            }
+
+            #pergunta:focus,
+            button:focus-visible {
+                outline: 3px solid #75a7a2;
+                outline-offset: 2px;
+            }
+
+            button {
+                min-height: 3rem;
+                padding: 0.7rem 1rem;
+                border: 1px solid transparent;
+                border-radius: 0.4rem;
+                cursor: pointer;
+                font-weight: 700;
+                transition: background-color 150ms ease, border-color 150ms ease, color 150ms ease;
+            }
+
+            button:disabled {
+                cursor: not-allowed;
+                opacity: 0.5;
+            }
+
+            #botaoEnviar {
+                background: var(--destaque);
+                color: #ffffff;
+            }
+
+            #botaoEnviar:hover:not(:disabled) {
+                background: var(--destaque-escuro);
+            }
+
+            #botaoMicrofone {
+                background: transparent;
+                border-color: var(--borda);
+                color: var(--texto);
+            }
+
+            #botaoMicrofone:hover:not(:disabled) {
+                border-color: var(--destaque);
+                color: var(--destaque-escuro);
+            }
+
+            #botaoParar {
+                background: transparent;
+                border-color: var(--perigo);
+                color: var(--perigo);
+            }
+
+            #botaoParar:hover:not(:disabled) {
+                background: var(--perigo);
+                color: #ffffff;
+            }
+
+            .aviso-erro {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                gap: 1rem;
+                padding: 0.75rem 0.85rem;
+                border-left: 3px solid var(--perigo);
+                background: #f8eeee;
+                color: var(--perigo-escuro);
+                font-size: 0.9rem;
+            }
+
+            .aviso-erro[hidden] {
+                display: none;
+            }
+
+            .aviso-erro p {
+                margin: 0;
+            }
+
+            #botaoTentar {
+                min-height: auto;
+                padding: 0.45rem 0.65rem;
+                border-color: var(--perigo);
+                background: transparent;
+                color: var(--perigo-escuro);
+                white-space: nowrap;
+            }
+
+            #botaoTentar:hover:not(:disabled) {
+                background: var(--perigo);
+                color: #ffffff;
+            }
+
+            @media (max-width: 560px) {
+                .aplicacao {
+                    padding: 1rem;
+                    gap: 1rem;
+                }
+
+                .cabecalho {
+                    align-items: start;
+                    flex-direction: column;
+                }
+
+                .conversa {
+                    min-height: 55vh;
+                    padding: 1rem;
+                }
+
+                .mensagem {
+                    max-width: 88%;
+                }
+
+                .linha-entrada {
+                    flex-wrap: wrap;
+                }
+
+                #pergunta {
+                    flex-basis: 100%;
+                }
+
+                .linha-entrada button {
+                    flex: 1;
+                }
+
+                .aviso-erro {
+                    align-items: start;
+                    flex-direction: column;
+                }
+            }
+        </style>
     </head>
     <body>
-        <h1>Kyria</h1>
+        <main class="aplicacao">
+            <header class="cabecalho">
+                <div>
+                    <h1 class="marca">Kyria</h1>
+                    <p class="descricao">Assistente pessoal local</p>
+                </div>
+                <p id="estado" class="estado" data-ativo="false" aria-live="polite">Pronta para conversar</p>
+            </header>
 
-        <div id="chat"></div>
+            <section class="conversa" aria-label="Conversa com Kyria">
+                <div id="chat" class="mensagens" aria-live="polite" aria-relevant="additions">
+                    <p id="orientacao" class="orientacao">Digite ou fale uma pergunta para começar.</p>
+                </div>
+            </section>
 
-        <input id="pergunta" type="text" placeholder="Digite sua pergunta">
-        <button id="botaoEnviar" onclick="enviar()">Enviar</button>
-        <button id="botaoMicrofone" onclick="ouvir()">🎤</button>
-        <button id="botaoParar" onclick="parar()" disabled>Parar</button>
+            <section class="entrada" aria-label="Enviar mensagem">
+                <label class="rotulo" for="pergunta">Mensagem</label>
+                <div class="linha-entrada">
+                    <input id="pergunta" type="text" placeholder="Digite sua pergunta" autocomplete="off">
+                    <button id="botaoMicrofone" type="button" onclick="ouvir()">Falar</button>
+                    <button id="botaoEnviar" type="button" onclick="enviar()">Enviar</button>
+                    <button id="botaoParar" type="button" onclick="parar()" disabled>Parar</button>
+                </div>
+                <div id="avisoErro" class="aviso-erro" role="alert" hidden>
+                    <p>Não foi possível concluir a resposta. Tente novamente.</p>
+                    <button id="botaoTentar" type="button" onclick="tentarNovamente()">Tentar novamente</button>
+                </div>
+            </section>
+        </main>
 
         <script>
             const campo = document.getElementById("pergunta")
             const botaoEnviar = document.getElementById("botaoEnviar")
             const botaoMicrofone = document.getElementById("botaoMicrofone")
             const botaoParar = document.getElementById("botaoParar")
+            const estado = document.getElementById("estado")
+            const chat = document.getElementById("chat")
+            const orientacao = document.getElementById("orientacao")
+            const avisoErro = document.getElementById("avisoErro")
+            const botaoTentar = document.getElementById("botaoTentar")
 
             let ocupado = false
             let controladorAtual = null
             let audioAtual = null
             let identificadorRequisicao = 0
+            let ultimaPergunta = ""
 
             campo.addEventListener("keydown", function(evento) {
                 if (evento.key === "Enter" && !ocupado) {
@@ -61,12 +395,27 @@ def inicio():
                 }
             })
 
+            function atualizarEstado(texto, ativo) {
+                estado.textContent = texto
+                estado.dataset.ativo = ativo
+            }
+
+            function esconderErro() {
+                avisoErro.hidden = true
+            }
+
+            function mostrarErro() {
+                botaoTentar.disabled = !ultimaPergunta
+                avisoErro.hidden = false
+            }
+
             function bloquear() {
                 ocupado = true
                 campo.disabled = true
                 botaoEnviar.disabled = true
                 botaoMicrofone.disabled = true
                 botaoParar.disabled = false
+                atualizarEstado("Kyria está respondendo", "true")
             }
 
             function desbloquear() {
@@ -75,25 +424,31 @@ def inicio():
                 botaoEnviar.disabled = false
                 botaoMicrofone.disabled = false
                 botaoParar.disabled = true
+                atualizarEstado("Pronta para conversar", "false")
                 campo.focus()
             }
 
-            async function enviar() {
+            async function enviar(repetir = false) {
                 if (ocupado) {
                     return
                 }
 
-                const pergunta = campo.value.trim()
+                const pergunta = repetir ? ultimaPergunta : campo.value.trim()
 
                 if (!pergunta) {
                     return
                 }
 
+                ultimaPergunta = pergunta
                 const identificador = ++identificadorRequisicao
                 controladorAtual = new AbortController()
+                esconderErro()
                 bloquear()
 
-                adicionarMensagem("Você", pergunta)
+                if (!repetir) {
+                    adicionarMensagem("Você", pergunta)
+                }
+
                 campo.value = ""
 
                 try {
@@ -101,6 +456,10 @@ def inicio():
                         `/perguntar?texto=${encodeURIComponent(pergunta)}`,
                         { signal: controladorAtual.signal }
                     )
+
+                    if (!resposta.ok) {
+                        throw new Error("Falha na resposta do servidor")
+                    }
 
                     const dados = await resposta.json()
 
@@ -110,23 +469,38 @@ def inicio():
 
                     controladorAtual = null
                     adicionarMensagem("Kyria", dados.resposta)
+                    atualizarEstado("Kyria está falando", "true")
                     falar(dados.resposta, identificador)
 
                 } catch (erro) {
                     if (erro.name !== "AbortError" && identificador === identificadorRequisicao) {
-                        adicionarMensagem("Kyria", "Ocorreu um erro ao processar sua mensagem.")
                         desbloquear()
+                        mostrarErro()
                     }
                 }
             }
 
-            function adicionarMensagem(nome, texto) {
-                const chat = document.getElementById("chat")
-                const mensagem = document.createElement("p")
+            function tentarNovamente() {
+                enviar(true)
+            }
 
-                mensagem.textContent = `${nome}: ${texto}`
+            function adicionarMensagem(nome, texto) {
+                const mensagem = document.createElement("article")
+                const remetente = document.createElement("span")
+                const conteudo = document.createElement("div")
+
+                orientacao.remove()
+                mensagem.className = nome === "Você" ? "mensagem usuario" : "mensagem kyria"
+                remetente.className = "mensagem-remetente"
+                conteudo.className = "mensagem-conteudo"
+                remetente.textContent = nome
+                conteudo.textContent = texto
+
+                mensagem.appendChild(remetente)
+                mensagem.appendChild(conteudo)
 
                 chat.appendChild(mensagem)
+                chat.scrollTop = chat.scrollHeight
             }
 
             function falar(texto, identificador) {
@@ -230,7 +604,7 @@ def perguntar(texto: str):
 @app.get("/falar")
 def falar(texto: str):
     inicio_total = perf_counter()
-    texto = limpar_texto(texto)
+    texto = limpar_texto(texto, remover_marcadores=True)
 
     arquivo = tempfile.NamedTemporaryFile(
         suffix=".wav",
@@ -270,5 +644,6 @@ def falar(texto: str):
 
     return FileResponse(
         caminho_audio,
-        media_type="audio/wav"
+        media_type="audio/wav",
+        background=BackgroundTask(caminho_audio.unlink, missing_ok=True)
     )
