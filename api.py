@@ -6,14 +6,17 @@ from time import perf_counter
 
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 from starlette.background import BackgroundTask
 
 from llm import perguntar_llm
 
-app = FastAPI()
-
 BASE_DIR = Path(__file__).resolve().parent
+STATIC_DIR = BASE_DIR / "static"
 MODELO_VOZ = BASE_DIR / "voices" / "pt_BR-cadu-medium.onnx"
+
+app = FastAPI()
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
 def limpar_texto(texto, remover_marcadores=False):
@@ -41,7 +44,9 @@ def inicio():
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <meta name="theme-color" content="#176b65">
         <title>Kyria</title>
+        <link rel="manifest" href="/static/manifest.webmanifest">
         <style>
             :root {
                 --fundo: #f3f0e9;
@@ -577,10 +582,25 @@ def inicio():
 
                 reconhecimento.start()
             }
+
+            if ("serviceWorker" in navigator) {
+                window.addEventListener("load", function() {
+                    navigator.serviceWorker.register("/service-worker.js")
+                })
+            }
         </script>
     </body>
     </html>
     """
+
+
+@app.get("/service-worker.js", include_in_schema=False)
+def service_worker():
+    return FileResponse(
+        STATIC_DIR / "service-worker.js",
+        media_type="application/javascript",
+        headers={"Service-Worker-Allowed": "/"}
+    )
 
 
 @app.get("/perguntar")
