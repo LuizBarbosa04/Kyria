@@ -47,6 +47,7 @@ def inicio():
         <meta name="theme-color" content="#176b65">
         <title>Kyria</title>
         <link rel="manifest" href="/static/manifest.webmanifest">
+        <link rel="icon" type="image/png" href="/static/icons/kyria-192.png">
         <style>
             :root {
                 --fundo: #f3f0e9;
